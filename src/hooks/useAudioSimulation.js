@@ -39,17 +39,41 @@ export function useAudioSimulation() {
   const mimeTypeRef = useRef('');
   const reconnectCountRef = useRef(0);
 
+  // Pause mic and discard current chunks — called when AI starts speaking
+  const pauseMic = useCallback(() => {
+    chunksRef.current = [];
+    isSpeakingRef.current = false;
+    clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.pause();
+    }
+  }, []);
+
+  // Resume mic — called when AI finishes speaking
+  const resumeMic = useCallback(() => {
+    chunksRef.current = [];
+    if (mediaRecorderRef.current?.state === 'paused') {
+      mediaRecorderRef.current.resume();
+    }
+  }, []);
+
   const playNextAudio = useCallback(() => {
     if (audioQueueRef.current.length === 0) {
       isPlayingRef.current = false;
       currentAudioRef.current = null;
+      resumeMic();
       return;
     }
+
     isPlayingRef.current = true;
+    pauseMic(); // stop capturing while AI speaks
+
     const blob = audioQueueRef.current.shift();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     currentAudioRef.current = audio;
+
     audio.onended = () => {
       URL.revokeObjectURL(url);
       currentAudioRef.current = null;
@@ -59,18 +83,20 @@ export function useAudioSimulation() {
       setStatus('listening');
       playNextAudio();
     };
+
     audio.onerror = () => {
       URL.revokeObjectURL(url);
       currentAudioRef.current = null;
       setStatus('listening');
       playNextAudio();
     };
+
     audio.play().catch(() => {
       currentAudioRef.current = null;
       setStatus('listening');
       playNextAudio();
     });
-  }, []);
+  }, [pauseMic, resumeMic]);
 
   const startSilenceDetection = useCallback(() => {
     if (!analyserRef.current) return;
@@ -83,10 +109,7 @@ export function useAudioSimulation() {
       const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
 
       if (rms > SILENCE_THRESHOLD) {
-        isSpeakingRef.current = true;
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = null;
-        // Interrupt AI audio the moment user speaks
+        // User is speaking — if AI was playing, interrupt it
         if (isPlayingRef.current && currentAudioRef.current) {
           currentAudioRef.current.pause();
           currentAudioRef.current = null;
@@ -96,12 +119,16 @@ export function useAudioSimulation() {
           if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify({ type: 'audio_done' }));
           }
+          resumeMic(); // resume mic so we capture what the user is actually saying
         }
+
+        isSpeakingRef.current = true;
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
       } else if (isSpeakingRef.current && !silenceTimerRef.current) {
         silenceTimerRef.current = setTimeout(() => {
           isSpeakingRef.current = false;
           silenceTimerRef.current = null;
-          // Stop the recorder — onstop will send the blob and restart it
           if (mediaRecorderRef.current?.state === 'recording') {
             mediaRecorderRef.current.stop();
           }
@@ -112,10 +139,10 @@ export function useAudioSimulation() {
     };
 
     animFrameRef.current = requestAnimationFrame(check);
-  }, []);
+  }, [resumeMic]);
 
   const startRecording = useCallback(async () => {
-    if (mediaRecorderRef.current) return; // already set up — reconnect reuses it
+    if (mediaRecorderRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       streamRef.current = stream;
@@ -136,7 +163,6 @@ export function useAudioSimulation() {
       };
 
       recorder.onstop = async () => {
-        // Each stop gives a complete, self-contained audio segment with its own header
         const chunks = chunksRef.current.splice(0);
         if (chunks.length > 0 && activeRef.current) {
           const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
@@ -145,7 +171,6 @@ export function useAudioSimulation() {
             wsRef.current.send(buffer);
           }
         }
-        // Restart immediately for next utterance
         if (activeRef.current && mediaRecorderRef.current?.state === 'inactive') {
           recorder.start();
         }
@@ -213,9 +238,7 @@ export function useAudioSimulation() {
       }
     };
 
-    ws.onerror = () => {
-      // onerror always precedes onclose — handle retry there
-    };
+    ws.onerror = () => {};
 
     ws.onclose = () => {
       if (!activeRef.current) return;
@@ -241,7 +264,6 @@ export function useAudioSimulation() {
     activeRef.current = true;
     reconnectCountRef.current = 0;
     mimeTypeRef.current = getSupportedMimeType();
-
     connectWS(sessionId, token);
   }, [connectWS]);
 

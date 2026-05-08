@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Rocket, ArrowLeft, CheckCircle2, Loader2, AlertTriangle,
   Sparkles, ChevronDown, ChevronUp, TrendingUp, Lock, Zap,
+  ExternalLink, BookOpen, Map, X, ArrowRight,
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 import { Button } from '@/components/ui/button';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { RESOURCES, getWeakestDimensions } from '@/data/resources';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -162,6 +165,271 @@ function ScoreRing({ overall, cfg }) {
   );
 }
 
+// ── Resource config (must precede RoadmapNode) ────────────────────────────────
+
+const TYPE_CONFIG = {
+  article:   { label: 'Article',   color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-500/20'      },
+  book:      { label: 'Book',      color: 'text-purple-400',  bg: 'bg-purple-500/10 border-purple-500/20'  },
+  video:     { label: 'Video',     color: 'text-red-400',     bg: 'bg-red-500/10 border-red-500/20'        },
+  framework: { label: 'Framework', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20'},
+  blog:      { label: 'Blog',      color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-500/20'  },
+};
+
+const RESOURCE_XP = { article: 10, blog: 10, video: 15, framework: 20, book: 25 };
+
+const REFLECTION_PROMPTS = {
+  problem_clarity:     'In one sentence, what is the exact problem your startup solves — and who feels it most painfully?',
+  value_proposition:   'What can your customer do now that they couldn\'t do before? Write it as a transformation, not a feature.',
+  market_size:         'What\'s your bottom-up market size calculation? Start from the number of customers you can reach in 12 months.',
+  competitors:         'Name two direct and two indirect alternatives to your product. Why does each one fall short?',
+  monetization:        'What is the single monetization motion you\'ll lead with — and what\'s your projected LTV:CAC?',
+  go_to_market:        'Who is your first 100 customers, exactly? How will you reach each of them this quarter?',
+  defensibility:       'What will be true in 3 years that makes it very hard for a well-funded competitor to copy you?',
+  founder_credibility: 'Why are YOU the right person to solve this problem? What have you done or lived that no one else has?',
+};
+
+// ── Completion modal ──────────────────────────────────────────────────────────
+
+function CompletionModal({ resource, xp, startupName, onClose, onPitch }) {
+  const prompt = REFLECTION_PROMPTS[resource.dimension] || 'How will you apply this to your next pitch?';
+  const [note, setNote] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 120);
+    const saved = localStorage.getItem(`pitchroom_note_${resource.id}`) || '';
+    setNote(saved);
+  }, [resource.id]);
+
+  const save = () => {
+    if (note.trim()) localStorage.setItem(`pitchroom_note_${resource.id}`, note.trim());
+    onClose();
+  };
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      {/* Backdrop */}
+      <motion.div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={save}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+      />
+
+      {/* Sheet */}
+      <motion.div
+        className="relative w-full max-w-md bg-[#0f0f0f] border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
+        initial={{ y: 40, opacity: 0, scale: 0.97 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.97 }}
+        transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+      >
+        {/* Top accent */}
+        <div className="h-0.5 w-full bg-gradient-to-r from-orange-500/0 via-orange-500 to-orange-500/0" />
+
+        <div className="p-5">
+          {/* XP earned row */}
+          <div className="flex items-center justify-between mb-4">
+            <motion.div
+              className="flex items-center gap-2"
+              initial={{ x: -12, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ delay: 0.1 }}
+            >
+              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center shadow-[0_0_12px_rgba(16,185,129,0.3)]">
+                <span className="text-emerald-400 text-sm">✓</span>
+              </div>
+              <div>
+                <div className="text-xs font-bold text-white/80">Resource completed!</div>
+                <div className="text-[10px] text-white/35">{resource.title}</div>
+              </div>
+            </motion.div>
+            <motion.span
+              className="text-sm font-black text-orange-400 px-2.5 py-1 rounded-full bg-orange-500/15 border border-orange-500/25"
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.15, type: 'spring', stiffness: 400 }}
+            >
+              +{xp} XP
+            </motion.span>
+          </div>
+
+          {/* Reflection prompt */}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.18 }}
+          >
+            <p className="text-[11px] uppercase tracking-widest text-white/25 font-semibold mb-2">
+              Apply the learning
+            </p>
+            <p className="text-sm text-white/65 leading-relaxed mb-3">
+              {prompt}
+            </p>
+            <textarea
+              ref={inputRef}
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder={startupName ? `Think about ${startupName}...` : 'Write your answer...'}
+              rows={3}
+              className="w-full bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white/70 placeholder:text-white/20 resize-none focus:outline-none focus:border-orange-500/40 focus:bg-white/[0.06] transition-all"
+            />
+          </motion.div>
+
+          {/* Actions */}
+          <motion.div
+            className="flex gap-2 mt-3"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.25 }}
+          >
+            <button
+              onClick={save}
+              className="flex-1 text-xs font-semibold py-2.5 rounded-xl border border-white/10 text-white/40 hover:text-white/60 hover:border-white/20 transition-all"
+            >
+              Save & continue
+            </button>
+            <button
+              onClick={() => { save(); onPitch(); }}
+              className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-all"
+            >
+              Test it in a pitch <ArrowRight size={11} />
+            </button>
+          </motion.div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Resource node (gamified) ──────────────────────────────────────────────────
+
+function ResourceNode({ resource, userLevel, isLast, index, readSet, onToggleRead }) {
+  const isLocked    = resource.level_min > userLevel;
+  const isRead      = readSet.has(resource.id);
+  const tc          = TYPE_CONFIG[resource.type] || TYPE_CONFIG.article;
+  const xp          = RESOURCE_XP[resource.type] || 10;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -16 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.06, duration: 0.35 }}
+      className="flex gap-4"
+    >
+      {/* Left rail */}
+      <div className="flex flex-col items-center w-10 flex-shrink-0">
+        <div className={cn(
+          'relative flex items-center justify-center w-9 h-9 rounded-full flex-shrink-0 z-10 transition-all duration-300',
+          isRead    ? 'bg-emerald-500/20 border-2 border-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.35)]' :
+          isLocked  ? 'bg-white/[0.03] border-2 border-white/8' :
+                      'bg-orange-500/15 border-2 border-orange-400/60 shadow-[0_0_10px_rgba(249,115,22,0.25)]',
+        )}>
+          <span className={cn(
+            'text-sm',
+            isRead   ? 'text-emerald-400' :
+            isLocked ? 'text-white/20' :
+                       'text-orange-300',
+          )}>
+            {isRead ? '✓' : isLocked ? <Lock size={12} /> : <BookOpen size={12} />}
+          </span>
+          {!isRead && !isLocked && (
+            <span className="absolute inset-0 rounded-full border-2 border-orange-400/20 animate-ping" />
+          )}
+        </div>
+        {!isLast && (
+          <div className={cn(
+            'w-px flex-1 mt-1.5 min-h-5',
+            isRead ? 'bg-emerald-500/20' : isLocked ? 'bg-white/5' : 'bg-orange-500/10',
+          )} />
+        )}
+      </div>
+
+      {/* Card */}
+      <div className={cn(
+        'flex-1 mb-3 rounded-2xl border transition-all',
+        isRead   ? 'border-emerald-500/20 bg-emerald-500/[0.04]' :
+        isLocked ? 'border-white/5 bg-transparent opacity-40' :
+                   'border-orange-500/15 bg-orange-500/[0.03]',
+      )}>
+        <div className="p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className={cn(
+                  'text-[9px] font-black px-1.5 py-[2px] rounded border uppercase tracking-wider',
+                  tc.bg, tc.color,
+                )}>
+                  {tc.label}
+                </span>
+                {isLocked && (
+                  <span className="text-[9px] text-white/20 font-medium">Level {resource.level_min}+</span>
+                )}
+              </div>
+              <div className={cn(
+                'text-xs font-bold tracking-wide',
+                isRead ? 'text-emerald-400' : isLocked ? 'text-white/20' : 'text-white/80',
+              )}>
+                {resource.title}
+              </div>
+              {resource.author && (
+                <div className="text-[10px] text-white/30 mt-0.5">{resource.author}</div>
+              )}
+            </div>
+            <span className={cn(
+              'text-[11px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 border',
+              isRead   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25' :
+              isLocked ? 'bg-white/5 text-white/20 border-white/8' :
+                         'bg-orange-500/15 text-orange-400 border-orange-500/25',
+            )}>
+              +{xp} XP
+            </span>
+          </div>
+
+          {!isLocked && (
+            <div className="mt-2.5">
+              {resource.description && (
+                <p className="text-xs text-white/40 leading-relaxed mb-3 line-clamp-2">{resource.description}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <a
+                  href={resource.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    'flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all',
+                    isRead
+                      ? 'bg-emerald-500/10 text-emerald-400/70 hover:bg-emerald-500/15 border border-emerald-500/20'
+                      : 'bg-orange-500/15 text-orange-400 hover:bg-orange-500/25 border border-orange-500/20',
+                  )}
+                >
+                  <ExternalLink size={10} /> Read
+                </a>
+                <button
+                  onClick={() => onToggleRead(resource.id)}
+                  className={cn(
+                    'flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all',
+                    isRead
+                      ? 'border-emerald-500/20 text-emerald-400/60 hover:text-emerald-400'
+                      : 'border-white/10 text-white/30 hover:text-white/60 hover:border-white/20',
+                  )}
+                >
+                  {isRead ? '✓ Completed' : 'Mark complete'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // ── Roadmap node ──────────────────────────────────────────────────────────────
 
 function RoadmapNode({ item, isLast, targetScore, index }) {
@@ -255,7 +523,8 @@ function RoadmapNode({ item, isLast, targetScore, index }) {
                     transition={{ duration: 0.25 }}
                     className="overflow-hidden"
                   >
-                    <p className="text-xs text-white/55 leading-relaxed pb-2">{item.drill}</p>
+                    <p className="text-xs text-white/55 leading-relaxed pb-3">{item.drill}</p>
+
                     <div className="flex items-center gap-1.5 pb-1">
                       <Zap size={10} className="text-orange-400/60" />
                       <span className="text-[10px] text-orange-400/70 font-semibold">
@@ -303,6 +572,42 @@ export default function ResultsPage() {
     goalsCompleted = [],
   } = location.state || {};
 
+  const [resources, setResources] = useState([]);
+  const [activeTab, setActiveTab] = useState('journey');
+  const [readSet, setReadSet] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('pitchroom_read_resources') || '[]')); }
+    catch { return new Set(); }
+  });
+  const [completionModal, setCompletionModal] = useState(null); // { resource }
+
+  const fireConfetti = () => {
+    const burst = (angle, x) => confetti({
+      particleCount: 55,
+      angle,
+      spread: 55,
+      origin: { x, y: 0.65 },
+      colors: ['#f97316', '#fb923c', '#fdba74', '#fbbf24', '#34d399', '#ffffff'],
+      scalar: 0.9,
+    });
+    burst(60, 0.25);
+    burst(120, 0.75);
+  };
+
+  const toggleRead = (id) => {
+    setReadSet(prev => {
+      const next = new Set(prev);
+      const isMarkingComplete = !prev.has(id);
+      next.has(id) ? next.delete(id) : next.add(id);
+      localStorage.setItem('pitchroom_read_resources', JSON.stringify([...next]));
+      if (isMarkingComplete) {
+        fireConfetti();
+        const resource = RESOURCES.find(r => r.id === id);
+        if (resource) setCompletionModal({ resource });
+      }
+      return next;
+    });
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -310,6 +615,17 @@ export default function ResultsPage() {
         setSession(s);
         setReport(s.final_report || null);
         setUser(u);
+
+        // Derive weak dimensions from action_plan (preferred) or raw scores
+        const scores = s.final_report?.scores || s.scores || {};
+        const dims = s.final_report?.action_plan?.length
+          ? s.final_report.action_plan.map(a => a.dimension)
+          : getWeakestDimensions(scores, 3);
+
+        // Load all resources for those dims (not level-filtered — UI handles locked state)
+        if (dims.length) {
+          setResources(RESOURCES.filter(r => dims.includes(r.dimension)));
+        }
       } catch (e) {
         setError(e.message);
       } finally {
@@ -495,64 +811,182 @@ export default function ResultsPage() {
         )}
       </AnimatePresence>
 
-      {/* Roadmap — scrollable */}
+      {/* Tabs */}
+      <div className="flex-shrink-0 border-b border-white/5 px-6">
+        <div className="max-w-2xl mx-auto flex gap-1 pt-2">
+          {[
+            { id: 'journey', label: 'Journey', icon: Map },
+            { id: 'study',   label: 'Study Material', icon: BookOpen, badge: resources.filter(r => r.level_min <= userLevel).length || null },
+          ].map(({ id, label, icon: Icon, badge }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={cn(
+                'relative flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold transition-colors rounded-t-lg',
+                activeTab === id
+                  ? 'text-white border-b-2 border-orange-500'
+                  : 'text-white/35 hover:text-white/60 border-b-2 border-transparent'
+              )}
+            >
+              <Icon size={12} />
+              {label}
+              {badge && (
+                <span className={cn(
+                  'ml-0.5 text-[9px] font-black px-1.5 py-px rounded-full',
+                  activeTab === id ? 'bg-orange-500/20 text-orange-400' : 'bg-white/8 text-white/30'
+                )}>
+                  {badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tab content — scrollable */}
       <main className="flex-1 overflow-y-auto min-h-0 px-6 py-5">
         <div className="max-w-2xl mx-auto">
 
-          {/* Goals completed banner */}
-          {goalsCompleted.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-              className="mb-5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3"
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 size={14} className="text-emerald-400" />
-                <span className="text-sm font-bold text-emerald-400">
-                  {goalsCompleted.length} training goal{goalsCompleted.length > 1 ? 's' : ''} completed!
-                </span>
+          {/* ── Journey tab ─────────────────────────────────────────────────── */}
+          {activeTab === 'journey' && (
+            <>
+              {/* Goals completed banner */}
+              {goalsCompleted.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                  className="mb-5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 size={14} className="text-emerald-400" />
+                    <span className="text-sm font-bold text-emerald-400">
+                      {goalsCompleted.length} training goal{goalsCompleted.length > 1 ? 's' : ''} completed!
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/50 leading-relaxed">
+                    You hit the target on {goalsCompleted.map(g => g.title).join(' and ')}. New goals unlocked below.
+                  </p>
+                </motion.div>
+              )}
+
+              {/* Board header */}
+              <div className="flex items-end justify-between mb-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold">Your Roadmap</div>
+                  <div className="text-base font-semibold text-white/75 mt-0.5">
+                    Path to <span className={cfg.color}>Investor Ready</span>
+                  </div>
+                </div>
+                <div className="text-right leading-none">
+                  <span className="text-2xl font-black">{completedCount}</span>
+                  <span className="text-white/25 text-lg font-bold">/{roadmap.length}</span>
+                  <div className="text-[10px] uppercase tracking-wide text-white/30 mt-1">Complete</div>
+                </div>
               </div>
-              <p className="text-xs text-white/50 leading-relaxed">
-                You hit the target on {goalsCompleted.map(g => g.title).join(' and ')}. New goals unlocked below.
-              </p>
-            </motion.div>
+
+              {/* Progress bar */}
+              <div className="h-1 bg-white/5 rounded-full mb-5 overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: cfg.ring }}
+                  initial={{ width: '2%' }}
+                  animate={{ width: `${Math.max(2, (completedCount / roadmap.length) * 100)}%` }}
+                  transition={{ duration: 1.1, ease: 'easeOut', delay: 0.4 }}
+                />
+              </div>
+
+              {/* Roadmap items */}
+              {roadmap.map((item, i) => (
+                <RoadmapNode
+                  key={item.id}
+                  item={item}
+                  index={i}
+                  isLast={i === roadmap.length - 1}
+                  targetScore={targetScore}
+                />
+              ))}
+            </>
           )}
 
-          {/* Board header */}
-          <div className="flex items-end justify-between mb-3">
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold">Your Roadmap</div>
-              <div className="text-base font-semibold text-white/75 mt-0.5">
-                Path to <span className={cfg.color}>Investor Ready</span>
-              </div>
-            </div>
-            <div className="text-right leading-none">
-              <span className="text-2xl font-black">{completedCount}</span>
-              <span className="text-white/25 text-lg font-bold">/{roadmap.length}</span>
-              <div className="text-[10px] uppercase tracking-wide text-white/30 mt-1">Complete</div>
-            </div>
-          </div>
+          {/* ── Study Material tab ──────────────────────────────────────────── */}
+          {activeTab === 'study' && (
+            <>
+              {resources.length === 0 ? (
+                <div className="text-center py-16">
+                  <BookOpen size={28} className="text-white/15 mx-auto mb-3" />
+                  <p className="text-sm text-white/30">Complete a pitch session to unlock study material</p>
+                </div>
+              ) : (() => {
+                const dims = [...new Set(resources.map(r => r.dimension))];
+                const readCount = resources.filter(r => readSet.has(r.id)).length;
+                const availableCount = resources.filter(r => r.level_min <= (userLevel)).length;
+                // flatten with global index for stagger
+                const flat = dims.flatMap(d => resources.filter(r => r.dimension === d));
 
-          {/* Progress bar */}
-          <div className="h-1 bg-white/5 rounded-full mb-5 overflow-hidden">
-            <motion.div
-              className="h-full rounded-full"
-              style={{ backgroundColor: cfg.ring }}
-              initial={{ width: '2%' }}
-              animate={{ width: `${Math.max(2, (completedCount / roadmap.length) * 100)}%` }}
-              transition={{ duration: 1.1, ease: 'easeOut', delay: 0.4 }}
-            />
-          </div>
+                return (
+                  <>
+                    {/* Header */}
+                    <div className="flex items-end justify-between mb-3">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-white/30 font-semibold">Study Material</div>
+                        <div className="text-base font-semibold text-white/75 mt-0.5">
+                          Master your <span className="text-orange-400">weak areas</span>
+                        </div>
+                      </div>
+                      <div className="text-right leading-none">
+                        <span className="text-2xl font-black">{readCount}</span>
+                        <span className="text-white/25 text-lg font-bold">/{availableCount}</span>
+                        <div className="text-[10px] uppercase tracking-wide text-white/30 mt-1">Studied</div>
+                      </div>
+                    </div>
 
-          {/* Roadmap items */}
-          {roadmap.map((item, i) => (
-            <RoadmapNode
-              key={item.id}
-              item={item}
-              index={i}
-              isLast={i === roadmap.length - 1}
-              targetScore={targetScore}
-            />
-          ))}
+                    {/* XP progress bar */}
+                    <div className="h-1 bg-white/5 rounded-full mb-5 overflow-hidden">
+                      <motion.div
+                        className="h-full rounded-full bg-orange-500"
+                        initial={{ width: '2%' }}
+                        animate={{ width: availableCount ? `${Math.max(2, (readCount / availableCount) * 100)}%` : '2%' }}
+                        transition={{ duration: 1.1, ease: 'easeOut', delay: 0.4 }}
+                      />
+                    </div>
+
+                    {/* Grouped resource nodes */}
+                    {dims.map((dim) => {
+                      const dimResources = resources.filter(r => r.dimension === dim);
+                      return (
+                        <div key={dim} className="mb-2">
+                          <div className="flex items-center gap-3 mb-3 mt-1">
+                            <div className="text-[10px] uppercase tracking-[0.18em] text-white/30 font-semibold whitespace-nowrap">
+                              {SCORE_LABELS[dim] || dim}
+                            </div>
+                            <div className="h-px flex-1 bg-white/5" />
+                          </div>
+                          {dimResources.map((r, ri) => (
+                            <ResourceNode
+                              key={r.id}
+                              resource={r}
+                              userLevel={userLevel}
+                              isLast={ri === dimResources.length - 1}
+                              index={flat.indexOf(r)}
+                              readSet={readSet}
+                              onToggleRead={toggleRead}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })}
+
+                    {/* Total XP earnable */}
+                    <div className="mt-2 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 flex items-center justify-between">
+                      <span className="text-xs text-white/35">Total XP available from study material</span>
+                      <span className="text-sm font-black text-orange-400">
+                        +{resources.filter(r => r.level_min <= userLevel).reduce((s, r) => s + (RESOURCE_XP[r.type] || 10), 0)} XP
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
+            </>
+          )}
 
         </div>
       </main>
@@ -609,6 +1043,23 @@ export default function ResultsPage() {
           </div>
         </div>
       )}
+
+      {/* Completion modal */}
+      <AnimatePresence>
+        {completionModal && (
+          <CompletionModal
+            resource={completionModal.resource}
+            xp={RESOURCE_XP[completionModal.resource.type] || 10}
+            startupName={session?.startup_name}
+            onClose={() => setCompletionModal(null)}
+            onPitch={() => {
+              const params = new URLSearchParams({ mode: session?.mode || 'vc' });
+              if (session?.startup_name) params.set('startup', session.startup_name);
+              navigate(`/setup?${params}`);
+            }}
+          />
+        )}
+      </AnimatePresence>
 
     </div>
   );

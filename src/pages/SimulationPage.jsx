@@ -89,8 +89,10 @@ export default function SimulationPage() {
     let xpState = {};
     try {
       const result = await api.endSession(sessionId);
+      xpState = { recommended_resources: result.recommended_resources || [] };
       if (result?.xp_earned) {
         xpState = {
+          ...xpState,
           xpEarned: result.xp_earned,
           newBadges: result.new_badges || [],
           newLevel: result.user_level,

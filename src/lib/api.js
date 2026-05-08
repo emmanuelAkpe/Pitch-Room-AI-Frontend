@@ -39,4 +39,7 @@ export const api = {
   getSession: (id) => request(`/sessions/${id}`),
   endSession: (id) => request(`/sessions/${id}/end`, { method: 'POST' }),
   saveGoals: (body) => request('/auth/goals', { method: 'POST', body: JSON.stringify(body) }),
+
+  getResources: (dimensions, level) =>
+    request(`/resources?dimensions=${dimensions.join(',')}&level=${level}`),
 };
